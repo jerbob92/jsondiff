@@ -58,6 +58,7 @@ type Options struct {
 	// When true, only differences will be printed. By default, it will print the full json.
 	SkipMatches bool
 	Skip        func(path string, a, b interface{}) bool
+	Transform   func(path string, a, b interface{}) (interface{}, interface{})
 }
 
 // Provides a set of options in JSON format that are fully parseable.
@@ -255,7 +256,16 @@ func (ctx *context) shouldSkip(path string, a, b interface{}) bool {
 	return false
 }
 
-func (ctx *context) printDiff(path string, a, b interface{}, beforePrint func()) bool {
+func (ctx *context) printDiff(path string, aOriginal, bOriginal interface{}, beforePrint func()) bool {
+	// Save the original in case the value is transformed and we have a mismatch.
+	a := aOriginal
+	b := bOriginal
+
+	// Allow transformation of the value before comparing.
+	if path != "" && ctx.opts.Transform != nil {
+		a, b = ctx.opts.Transform(strings.TrimLeft(path, "."), a, b)
+	}
+
 	if ctx.shouldSkip(path, a, b) {
 		return false
 	}
@@ -273,7 +283,7 @@ func (ctx *context) printDiff(path string, a, b interface{}, beforePrint func())
 			return false
 		} else {
 			beforePrint()
-			ctx.printMismatch(a, b)
+			ctx.printMismatch(aOriginal, bOriginal)
 			ctx.result(NoMatch)
 			return true
 		}
@@ -283,7 +293,7 @@ func (ctx *context) printDiff(path string, a, b interface{}, beforePrint func())
 	kb := reflect.TypeOf(b).Kind()
 	if ka != kb {
 		beforePrint()
-		ctx.printMismatch(a, b)
+		ctx.printMismatch(aOriginal, bOriginal)
 		ctx.result(NoMatch)
 		return true
 	}
@@ -291,7 +301,7 @@ func (ctx *context) printDiff(path string, a, b interface{}, beforePrint func())
 	case reflect.Bool:
 		if a.(bool) != b.(bool) {
 			beforePrint()
-			ctx.printMismatch(a, b)
+			ctx.printMismatch(aOriginal, bOriginal)
 			ctx.result(NoMatch)
 			return true
 		}
@@ -301,7 +311,7 @@ func (ctx *context) printDiff(path string, a, b interface{}, beforePrint func())
 			bb, ok := b.(json.Number)
 			if !ok || !ctx.compareNumbers(aa, bb) {
 				beforePrint()
-				ctx.printMismatch(a, b)
+				ctx.printMismatch(aOriginal, bOriginal)
 				ctx.result(NoMatch)
 				return true
 			}
@@ -309,7 +319,7 @@ func (ctx *context) printDiff(path string, a, b interface{}, beforePrint func())
 			bb, ok := b.(string)
 			if !ok || aa != bb {
 				beforePrint()
-				ctx.printMismatch(a, b)
+				ctx.printMismatch(aOriginal, bOriginal)
 				ctx.result(NoMatch)
 				return true
 			}
@@ -440,7 +450,7 @@ func (ctx *context) printDiff(path string, a, b interface{}, beforePrint func())
 			vb, bok := mb[k]
 			hadChanges := false
 			if aok && bok {
-				hadChanges = ctx.printDiff(path + "." + k, va, vb, func() {
+				hadChanges = ctx.printDiff(path+"."+k, va, vb, func() {
 					writeHeader()
 					ctx.key(k)
 				})
